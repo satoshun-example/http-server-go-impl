@@ -34,3 +34,7 @@ Hello World!!%
 
 - remove net.Listen method
 - corresponds various Request header, cache-control, content-encoding, and other.
+- http#Handlerにinterfaceをあわせる
+  - ResponseWriter, Requestの実装
+- POST method対応(body)
+- Content-Type対応(json, xml, etc)
