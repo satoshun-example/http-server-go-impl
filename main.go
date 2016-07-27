@@ -145,6 +145,14 @@ func acceptWithSyscall() {
 	fl := strings.Split(string(ss[0]), " ")
 	method, path, proto := fl[0], fl[1], fl[2]
 	log.Println(method, path, proto)
+
+	_, err = syscall.Write(nfd, []byte("HTTP/1.1 200 OK\n"))
+	if err != nil {
+		panic(err)
+	}
+
+	syscall.Write(nfd, []byte("Server: original HTTP server\n\n"))
+	syscall.Write(nfd, []byte("Hello World!!"))
 }
 
 func init() {
