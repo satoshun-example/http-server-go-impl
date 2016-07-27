@@ -71,7 +71,7 @@ func registerHandler(pat string, handler func(http.ResponseWriter, *http.Request
 	defaultMux[pat] = http.HandlerFunc(handler)
 }
 
-func acceptRequest() {
+func acceptWithNetListen() {
 	// TODO: does not use net#Listen
 	ln, err := net.Listen("tcp", ":8080")
 	if err != nil {
@@ -88,7 +88,7 @@ func acceptRequest() {
 	conn.Close()
 }
 
-func socket() {
+func acceptWithSyscall() {
 	// create tcp socket
 	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
 	if err != nil {
@@ -104,16 +104,47 @@ func socket() {
 		panic(err)
 	}
 
+	// listen
 	err = syscall.Listen(fd, 1)
 	if err != nil {
 		panic(err)
 	}
 
+	// accept
 	nfd, _, err := syscall.Accept(fd)
 	if err != nil {
+		syscall.Close(fd)
 		panic(err)
 	}
-	log.Println(nfd)
+	defer syscall.Close(nfd)
+
+	// read
+	d := make([]byte, 0, 256)
+	for {
+		b := make([]byte, 256)
+		n, err := syscall.Read(nfd, b)
+		if err != nil {
+			panic(err)
+		}
+		d = append(d, b...)
+		if n < 256 {
+			break
+		}
+	}
+
+	ss := make([][]byte, 0, 2)
+	before := 0
+	for i, c := range d {
+		if c == '\n' {
+			ss = append(ss, d[before:i])
+			log.Println(string(d[before:i]))
+			before = i + 1
+		}
+	}
+
+	fl := strings.Split(string(ss[0]), " ")
+	method, path, proto := fl[0], fl[1], fl[2]
+	log.Println(method, path, proto)
 }
 
 func init() {
@@ -126,5 +157,5 @@ func main() {
 		w.WriteHeader(200)
 	})
 
-	socket()
+	acceptWithSyscall()
 }
