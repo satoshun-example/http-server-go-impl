@@ -2,10 +2,12 @@ package main
 
 import (
 	"bufio"
+	"log"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 type mux map[string]http.Handler
@@ -86,6 +88,34 @@ func acceptRequest() {
 	conn.Close()
 }
 
+func socket() {
+	// create tcp socket
+	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
+	if err != nil {
+		panic(err)
+	}
+
+	// bind port
+	err = syscall.Bind(fd, &syscall.SockaddrInet4{
+		Port: 8080,
+		Addr: [4]byte{127, 0, 0, 1},
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	err = syscall.Listen(fd, 1)
+	if err != nil {
+		panic(err)
+	}
+
+	nfd, _, err := syscall.Accept(fd)
+	if err != nil {
+		panic(err)
+	}
+	log.Println(nfd)
+}
+
 func init() {
 	defaultMux = make(map[string]http.Handler)
 }
@@ -96,5 +126,5 @@ func main() {
 		w.WriteHeader(200)
 	})
 
-	acceptRequest()
+	socket()
 }
