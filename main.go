@@ -1,8 +1,8 @@
 package main
 
 import (
-	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"syscall"
 )
@@ -10,6 +10,36 @@ import (
 type mux map[string]http.Handler
 
 var defaultMux mux
+
+type syscallWriter struct {
+	socketfd int
+	code     int
+	data     [][]byte
+	req      *http.Request
+}
+
+func (w *syscallWriter) Header() http.Header {
+	return nil
+}
+
+func (w *syscallWriter) Write(b []byte) (int, error) {
+	w.data = append(w.data, b)
+	return len(b), nil
+}
+
+func (w *syscallWriter) WriteHeader(code int) {
+	w.code = code
+}
+
+func (w *syscallWriter) emit() {
+	// FIXME: ONLY OK ?
+	syscall.Write(w.socketfd, []byte(w.req.Proto+" "+strconv.Itoa(w.code)+" OK\n"))
+	syscall.Write(w.socketfd, []byte("Server: original HTTP server\n\n"))
+
+	for i := range w.data {
+		syscall.Write(w.socketfd, w.data[i])
+	}
+}
 
 func registerHandler(pat string, handler func(http.ResponseWriter, *http.Request)) {
 	defaultMux[pat] = http.HandlerFunc(handler)
@@ -64,34 +94,42 @@ func acceptWithSyscall() {
 	for i, c := range d {
 		if c == '\n' {
 			ss = append(ss, d[before:i])
-			log.Println(string(d[before:i]))
 			before = i + 1
 		}
 	}
 
 	fl := strings.SplitN(string(ss[0]), " ", 3)
 	method, path, proto := fl[0], fl[1], fl[2]
-	log.Println(method, path, proto)
 
 	if method != "GET" {
 		_, err = syscall.Write(nfd, []byte(proto+" 405 Method Not Allowed\n"))
 		return
 	}
 
-	_, err = syscall.Write(nfd, []byte(proto+" 200 OK\n"))
-	if err != nil {
-		panic(err)
+	req := &http.Request{
+		Proto:  proto,
+		Method: method,
+	}
+	writer := &syscallWriter{
+		socketfd: nfd,
+		code:     200,
+		data:     make([][]byte, 0, 2),
+		req:      req}
+
+	m := false
+	for pat, h := range defaultMux {
+		if pat == path {
+			h.ServeHTTP(writer, req)
+			m = true
+			break
+		}
+	}
+	if !m {
+		_, err = syscall.Write(nfd, []byte(proto+" 404 Not Found\n"))
+		return
 	}
 
-	syscall.Write(nfd, []byte("Server: original HTTP server\n\n"))
-	syscall.Write(nfd, []byte(`<!DOCTYPE html>
-<html lang="en">
-<head>
-	<meta charset="UTF-8" />
-	<title>Test</title>
-</head>
-<body>Hello World!!</body>
-</html>`))
+	writer.emit()
 }
 
 func init() {
@@ -100,7 +138,14 @@ func init() {
 
 func main() {
 	registerHandler("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("\nHello World!!\n"))
+		w.Write([]byte(`<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8" />
+	<title>Test</title>
+</head>
+<body>Hello World!!</body>
+</html>`))
 		w.WriteHeader(200)
 	})
 
