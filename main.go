@@ -100,6 +100,7 @@ func acceptWithSyscall() {
 
 	fl := strings.SplitN(string(ss[0]), " ", 3)
 	method, path, proto := fl[0], fl[1], fl[2]
+	proto = proto[:len(proto)-1]
 
 	if method != "GET" {
 		_, err = syscall.Write(nfd, []byte(proto+" 405 Method Not Allowed\n"))
