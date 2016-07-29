@@ -19,7 +19,7 @@ type syscallWriter struct {
 }
 
 func (w *syscallWriter) Header() http.Header {
-	return nil
+	return w.req.Header
 }
 
 func (w *syscallWriter) Write(b []byte) (int, error) {
@@ -32,9 +32,13 @@ func (w *syscallWriter) WriteHeader(code int) {
 }
 
 func (w *syscallWriter) emit() {
-	// FIXME: ONLY OK ?
-	syscall.Write(w.socketfd, []byte(w.req.Proto+" "+strconv.Itoa(w.code)+" OK\n"))
-	syscall.Write(w.socketfd, []byte("Server: original HTTP server\n\n"))
+	syscall.Write(w.socketfd, []byte(w.req.Proto+" "+strconv.Itoa(w.code)+" "+http.StatusText(w.code)+"\n"))
+
+	for k, v := range w.req.Header {
+		syscall.Write(w.socketfd, []byte(k+": "+strings.Join(v, ",")+"\n"))
+	}
+
+	syscall.Write(w.socketfd, []byte{'\n'})
 
 	for i := range w.data {
 		syscall.Write(w.socketfd, w.data[i])
@@ -102,20 +106,24 @@ func acceptWithSyscall() {
 	method, path, proto := fl[0], fl[1], fl[2]
 	proto = proto[:len(proto)-1]
 
-	if method != "GET" {
-		_, err = syscall.Write(nfd, []byte(proto+" 405 Method Not Allowed\n"))
-		return
-	}
-
+	header := make(http.Header)
+	header.Add("Server", "Test HTTP server")
 	req := &http.Request{
 		Proto:  proto,
 		Method: method,
+		Header: header,
 	}
 	writer := &syscallWriter{
 		socketfd: nfd,
-		code:     200,
+		code:     http.StatusOK,
 		data:     make([][]byte, 0, 2),
 		req:      req}
+
+	if method != "GET" {
+		writer.WriteHeader(405)
+		writer.emit()
+		return
+	}
 
 	m := false
 	for pat, h := range defaultMux {
@@ -126,10 +134,8 @@ func acceptWithSyscall() {
 		}
 	}
 	if !m {
-		_, err = syscall.Write(nfd, []byte(proto+" 404 Not Found\n"))
-		return
+		writer.WriteHeader(404)
 	}
-
 	writer.emit()
 }
 
