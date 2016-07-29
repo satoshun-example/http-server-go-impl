@@ -122,7 +122,7 @@ func acceptWithSyscall() {
 		req:      req}
 
 	if method != "GET" {
-		writer.WriteHeader(405)
+		writer.WriteHeader(http.StatusMethodNotAllowed)
 		writer.emit()
 		return
 	}
@@ -136,7 +136,7 @@ func acceptWithSyscall() {
 		}
 	}
 	if !m {
-		writer.WriteHeader(404)
+		writer.WriteHeader(http.StatusNotFound)
 	}
 	writer.emit()
 }
