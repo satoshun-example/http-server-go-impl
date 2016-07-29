@@ -16,6 +16,8 @@ type syscallWriter struct {
 	code     int
 	data     [][]byte
 	req      *http.Request
+
+	contentLength int
 }
 
 func (w *syscallWriter) Header() http.Header {
@@ -24,6 +26,7 @@ func (w *syscallWriter) Header() http.Header {
 
 func (w *syscallWriter) Write(b []byte) (int, error) {
 	w.data = append(w.data, b)
+	w.contentLength += len(b)
 	return len(b), nil
 }
 
@@ -37,8 +40,7 @@ func (w *syscallWriter) emit() {
 	for k, v := range w.req.Header {
 		syscall.Write(w.socketfd, []byte(k+": "+strings.Join(v, ",")+"\n"))
 	}
-
-	syscall.Write(w.socketfd, []byte{'\n'})
+	syscall.Write(w.socketfd, []byte("Content-Length:"+strconv.Itoa(w.contentLength)+"\n\n"))
 
 	for i := range w.data {
 		syscall.Write(w.socketfd, w.data[i])
