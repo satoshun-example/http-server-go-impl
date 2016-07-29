@@ -51,7 +51,7 @@ func registerHandler(pat string, handler func(http.ResponseWriter, *http.Request
 	defaultMux[pat] = http.HandlerFunc(handler)
 }
 
-func acceptWithSyscall() {
+func acceptWithSyscall(port int) {
 	// create tcp socket
 	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
 	if err != nil {
@@ -60,7 +60,7 @@ func acceptWithSyscall() {
 
 	// bind port
 	err = syscall.Bind(fd, &syscall.SockaddrInet4{
-		Port: 8080,
+		Port: port,
 		Addr: [4]byte{127, 0, 0, 1},
 	})
 	if err != nil {
@@ -158,5 +158,5 @@ func main() {
 		w.WriteHeader(200)
 	})
 
-	acceptWithSyscall()
+	acceptWithSyscall(8080)
 }
