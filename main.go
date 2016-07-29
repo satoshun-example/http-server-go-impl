@@ -72,14 +72,15 @@ func acceptWithSyscall(port int) {
 	if err != nil {
 		panic(err)
 	}
+	defer syscall.Shutdown(fd, syscall.SHUT_RD)
 
 	// accept
 	nfd, _, err := syscall.Accept(fd)
 	if err != nil {
-		syscall.Close(fd)
 		panic(err)
 	}
-	defer syscall.Close(nfd)
+
+	defer syscall.Shutdown(nfd, syscall.SHUT_RD)
 
 	// read
 	d := make([]byte, 0, 256)
