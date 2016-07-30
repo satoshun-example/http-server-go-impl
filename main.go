@@ -1,21 +1,89 @@
 package main
 
 import (
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 type mux map[string]http.Handler
 
 var defaultMux mux
 
+type addr struct {
+	host string
+	port string
+}
+
+func (a *addr) Network() string {
+	// only tcp
+	return "tcp"
+}
+
+// String return a host:port
+func (a *addr) String() string {
+	if a == nil {
+		return "<nil>"
+	}
+	return a.host + ":" + a.port
+}
+
+type syscallConn struct {
+	sockfd int
+
+	laddr *syscall.SockaddrInet4
+	raddr *syscall.SockaddrInet4
+}
+
+func (c *syscallConn) Read(b []byte) (n int, err error) {
+	n, err = syscall.Read(c.sockfd, b)
+	return
+}
+
+func (c *syscallConn) Write(b []byte) (int, error) {
+	syscall.Write(c.sockfd, b)
+	return len(b), nil
+}
+
+func (c *syscallConn) Close() (err error) {
+	syscall.Shutdown(c.sockfd, syscall.SHUT_RD)
+	return
+}
+
+func (c *syscallConn) LocalAddr() net.Addr {
+	return &addr{
+		host: string(c.laddr.Addr[:4]),
+		port: string(c.laddr.Port),
+	}
+}
+
+func (c *syscallConn) RemoteAddr() net.Addr {
+	return &addr{
+		host: string(c.raddr.Addr[:4]),
+		port: string(c.raddr.Port),
+	}
+}
+
+func (c *syscallConn) SetDeadline(t time.Time) (err error) {
+	return
+}
+
+func (c *syscallConn) SetReadDeadline(t time.Time) (err error) {
+	return
+}
+
+func (c *syscallConn) SetWriteDeadline(t time.Time) (err error) {
+	return
+}
+
 type syscallWriter struct {
-	socketfd int
-	code     int
-	data     [][]byte
-	req      *http.Request
+	conn net.Conn
+	code int
+	data [][]byte
+	req  *http.Request
 
 	contentLength int
 }
@@ -35,15 +103,15 @@ func (w *syscallWriter) WriteHeader(code int) {
 }
 
 func (w *syscallWriter) emit() {
-	syscall.Write(w.socketfd, []byte(w.req.Proto+" "+strconv.Itoa(w.code)+" "+http.StatusText(w.code)+"\n"))
+	w.conn.Write([]byte(w.req.Proto + " " + strconv.Itoa(w.code) + " " + http.StatusText(w.code) + "\n"))
 
 	for k, v := range w.req.Header {
-		syscall.Write(w.socketfd, []byte(k+": "+strings.Join(v, ",")+"\n"))
+		w.conn.Write([]byte(k + ": " + strings.Join(v, ",") + "\n"))
 	}
-	syscall.Write(w.socketfd, []byte("Content-Length:"+strconv.Itoa(w.contentLength)+"\n\n"))
+	w.conn.Write([]byte("Content-Length:" + strconv.Itoa(w.contentLength) + "\n\n"))
 
 	for i := range w.data {
-		syscall.Write(w.socketfd, w.data[i])
+		w.conn.Write(w.data[i])
 	}
 }
 
@@ -58,11 +126,13 @@ func acceptWithSyscall(port int) {
 		panic(err)
 	}
 
-	// bind port
-	err = syscall.Bind(fd, &syscall.SockaddrInet4{
+	laddr := &syscall.SockaddrInet4{
 		Port: port,
 		Addr: [4]byte{127, 0, 0, 1},
-	})
+	}
+	// bind port
+	err = syscall.Bind(fd, laddr)
+
 	if err != nil {
 		panic(err)
 	}
@@ -75,18 +145,27 @@ func acceptWithSyscall(port int) {
 	defer syscall.Shutdown(fd, syscall.SHUT_RD)
 
 	// accept
-	nfd, _, err := syscall.Accept(fd)
+	nfd, sa, err := syscall.Accept(fd)
 	if err != nil {
 		panic(err)
 	}
+	conn := &syscallConn{
+		sockfd: nfd,
+		laddr:  laddr,
+	}
+	defer conn.Close()
 
-	defer syscall.Shutdown(nfd, syscall.SHUT_RD)
+	raddr, ok := sa.(*syscall.SockaddrInet4)
+	if !ok {
+		panic("unknown protocol")
+	}
+	conn.raddr = raddr
 
 	// read
 	d := make([]byte, 0, 256)
 	for {
 		b := make([]byte, 256)
-		n, err := syscall.Read(nfd, b)
+		n, err := conn.Read(b)
 		if err != nil {
 			panic(err)
 		}
@@ -117,10 +196,10 @@ func acceptWithSyscall(port int) {
 		Header: header,
 	}
 	writer := &syscallWriter{
-		socketfd: nfd,
-		code:     http.StatusOK,
-		data:     make([][]byte, 0, 2),
-		req:      req}
+		conn: conn,
+		code: http.StatusOK,
+		data: make([][]byte, 0, 2),
+		req:  req}
 
 	if method != "GET" {
 		writer.WriteHeader(http.StatusMethodNotAllowed)

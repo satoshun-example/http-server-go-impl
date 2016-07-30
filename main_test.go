@@ -35,3 +35,16 @@ func TestContentLength(t *testing.T) {
 		t.Errorf("is not 4: actual %d", resp.ContentLength)
 	}
 }
+
+func TestLocalAdd(t *testing.T) {
+	a := addr{
+		host: "127.0.0.1",
+		port: "8080",
+	}
+	if a.String() != "127.0.0.1:8080" {
+		t.Errorf("is not 127.0.0.1:8080: actual %s", a.String())
+	}
+	if a.Network() != "tcp" {
+		t.Errorf("is not tcp: actual %s", a.Network())
+	}
+}
