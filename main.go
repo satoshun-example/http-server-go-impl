@@ -80,10 +80,12 @@ func (c *syscallConn) SetWriteDeadline(t time.Time) (err error) {
 }
 
 type syscallWriter struct {
-	conn net.Conn
-	code int
-	data [][]byte
-	req  *http.Request
+	conn    net.Conn
+	code    int
+	data    [][]byte
+	rheader *http.Header
+
+	req *http.Request
 
 	contentLength int
 }
@@ -105,7 +107,7 @@ func (w *syscallWriter) WriteHeader(code int) {
 func (w *syscallWriter) emit() {
 	w.conn.Write([]byte(w.req.Proto + " " + strconv.Itoa(w.code) + " " + http.StatusText(w.code) + "\n"))
 
-	for k, v := range w.req.Header {
+	for k, v := range *w.rheader {
 		w.conn.Write([]byte(k + ": " + strings.Join(v, ",") + "\n"))
 	}
 	w.conn.Write([]byte("Content-Length:" + strconv.Itoa(w.contentLength) + "\n\n"))
@@ -189,17 +191,27 @@ func acceptWithSyscall(port int) {
 	proto = proto[:len(proto)-1]
 
 	header := make(http.Header)
-	header.Add("Server", "Test HTTP server")
+	for _, v := range ss[1:] {
+		vv := string(v)
+		vvv := strings.SplitN(vv, ":", 2)
+		if len(vvv) != 2 {
+			continue
+		}
+		header.Add(vvv[0], strings.TrimSpace(vvv[1]))
+	}
 	req := &http.Request{
 		Proto:  proto,
 		Method: method,
 		Header: header,
 	}
+	rheader := make(http.Header)
+	rheader.Add("Server", "Test HTTP server")
 	writer := &syscallWriter{
-		conn: conn,
-		code: http.StatusOK,
-		data: make([][]byte, 0, 2),
-		req:  req}
+		conn:    conn,
+		code:    http.StatusOK,
+		data:    make([][]byte, 0, 2),
+		rheader: &rheader,
+		req:     req}
 
 	if method != "GET" {
 		writer.WriteHeader(http.StatusMethodNotAllowed)
