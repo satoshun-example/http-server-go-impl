@@ -85,7 +85,7 @@ func (c *syscallConn) SetWriteDeadline(t time.Time) (err error) {
 type syscallWriter struct {
 	conn    net.Conn
 	code    int
-	data    [][]byte
+	data    *bytes.Buffer
 	rheader *http.Header
 
 	req *http.Request
@@ -98,13 +98,22 @@ func (w *syscallWriter) Header() http.Header {
 }
 
 func (w *syscallWriter) Write(b []byte) (int, error) {
-	w.data = append(w.data, b)
-	w.contentLength += len(b)
-	return len(b), nil
+	n, err := w.data.Write(b)
+	if err != nil {
+		return 0, err
+	}
+
+	w.contentLength += n
+	return n, nil
 }
 
 func (w *syscallWriter) WriteHeader(code int) {
 	w.code = code
+}
+
+func (w *syscallWriter) dataAll() []byte {
+	b, _ := ioutil.ReadAll(w.data)
+	return b
 }
 
 func (w *syscallWriter) emit() {
@@ -116,34 +125,27 @@ func (w *syscallWriter) emit() {
 
 	w.conn.Write([]byte("Content-Type: text/html; charset=UTF-8\n"))
 
-	if encoding := w.req.Header.Get("Accept-Encoding"); encoding != "" {
-		switch encoding {
-		case "gzip":
-			w.conn.Write([]byte("Content-Encoding: gzip\n"))
+	encoding := w.req.Header.Get("Accept-Encoding")
+	switch encoding {
+	case "gzip":
+		w.conn.Write([]byte("Content-Encoding: gzip\n"))
 
-			var b bytes.Buffer
-			gz := gzip.NewWriter(&b)
+		var b bytes.Buffer
+		gz := gzip.NewWriter(&b)
 
-			data := make([]byte, 0, w.contentLength)
-			for _, d := range w.data {
-				data = append(data, d...)
-			}
-			gz.Write(data)
-			gz.Close()
+		data, _ := ioutil.ReadAll(w.data)
+		gz.Write(data)
+		gz.Close()
 
-			bb, err := ioutil.ReadAll(&b)
-			if err != nil {
-				panic(err)
-			}
-			w.conn.Write([]byte("Content-Length:" + strconv.Itoa(len(bb)) + "\n\n"))
-			w.conn.Write(bb)
-		default: // plain
-			w.conn.Write([]byte("Content-Length:" + strconv.Itoa(w.contentLength) + "\n\n"))
-
-			for i := range w.data {
-				w.conn.Write(w.data[i])
-			}
+		bb, err := ioutil.ReadAll(&b)
+		if err != nil {
+			panic(err)
 		}
+		w.conn.Write([]byte("Content-Length: " + strconv.Itoa(len(bb)) + "\n\n"))
+		w.conn.Write(bb)
+	default: // plain
+		w.conn.Write([]byte("Content-Length: " + strconv.Itoa(w.contentLength) + "\n\n"))
+		w.conn.Write(w.dataAll())
 	}
 }
 
@@ -239,7 +241,7 @@ func acceptWithSyscall(port int) {
 	writer := &syscallWriter{
 		conn:    conn,
 		code:    http.StatusOK,
-		data:    make([][]byte, 0, 2),
+		data:    new(bytes.Buffer),
 		rheader: &rheader,
 		req:     req}
 

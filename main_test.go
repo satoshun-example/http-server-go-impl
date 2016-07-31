@@ -23,6 +23,28 @@ func TestContentLength(t *testing.T) {
 	go acceptWithSyscall(port)
 	time.Sleep(time.Millisecond * 100)
 
+	client := &http.Client{}
+	req, _ := http.NewRequest("GET", url(port), nil)
+	// disable gzip encoding
+	req.Header.Set("Accept-Encoding", "")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("is not 200: actual %d", resp.StatusCode)
+	}
+	if resp.ContentLength != 4 {
+		t.Errorf("is not 4: actual %d", resp.ContentLength)
+	}
+}
+
+func TestGzipContentLength(t *testing.T) {
+	port := 8088
+	go acceptWithSyscall(port)
+	time.Sleep(time.Millisecond * 100)
+
 	resp, err := http.Get(url(port))
 	if err != nil {
 		t.Error(err)
