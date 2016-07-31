@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
+	"io/ioutil"
 	"net"
 	"net/http"
 	"strconv"
@@ -110,10 +113,37 @@ func (w *syscallWriter) emit() {
 	for k, v := range *w.rheader {
 		w.conn.Write([]byte(k + ": " + strings.Join(v, ",") + "\n"))
 	}
-	w.conn.Write([]byte("Content-Length:" + strconv.Itoa(w.contentLength) + "\n\n"))
 
-	for i := range w.data {
-		w.conn.Write(w.data[i])
+	w.conn.Write([]byte("Content-Type: text/html; charset=UTF-8\n"))
+
+	if encoding := w.req.Header.Get("Accept-Encoding"); encoding != "" {
+		switch encoding {
+		case "gzip":
+			w.conn.Write([]byte("Content-Encoding: gzip\n"))
+
+			var b bytes.Buffer
+			gz := gzip.NewWriter(&b)
+
+			data := make([]byte, 0, w.contentLength)
+			for _, d := range w.data {
+				data = append(data, d...)
+			}
+			gz.Write(data)
+			gz.Close()
+
+			bb, err := ioutil.ReadAll(&b)
+			if err != nil {
+				panic(err)
+			}
+			w.conn.Write([]byte("Content-Length:" + strconv.Itoa(len(bb)) + "\n\n"))
+			w.conn.Write(bb)
+		default: // plain
+			w.conn.Write([]byte("Content-Length:" + strconv.Itoa(w.contentLength) + "\n\n"))
+
+			for i := range w.data {
+				w.conn.Write(w.data[i])
+			}
+		}
 	}
 }
 
