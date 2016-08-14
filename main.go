@@ -148,10 +148,7 @@ func (w *syscallWriter) emit() {
 		gz.Write(data)
 		gz.Close()
 
-		bb, err := ioutil.ReadAll(&b)
-		if err != nil {
-			panic(err)
-		}
+		bb := b.Bytes()
 		w.conn.Write([]byte([]byte("Content-Length: " + strconv.Itoa(len(bb)) + "\n\n")))
 		w.conn.Write(bb)
 	default: // plain
