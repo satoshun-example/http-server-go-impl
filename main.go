@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"compress/gzip"
+	"flag"
+	"fmt"
 	"io/ioutil"
 	"net"
 	"net/http"
@@ -19,6 +21,12 @@ var defaultMux mux
 type addr struct {
 	host string
 	port string
+}
+
+type handlerFunc func(http.ResponseWriter, *http.Request)
+
+func (f handlerFunc) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	f(w, r)
 }
 
 func (a *addr) Network() string {
@@ -48,11 +56,15 @@ func (c *syscallConn) Read(b []byte) (n int, err error) {
 
 func (c *syscallConn) Write(b []byte) (int, error) {
 	syscall.Write(c.sockfd, b)
+	if *debug {
+		fmt.Println(string(b))
+	}
 	return len(b), nil
 }
 
 func (c *syscallConn) Close() (err error) {
-	syscall.Shutdown(c.sockfd, syscall.SHUT_RD)
+	syscall.Shutdown(c.sockfd, syscall.SHUT_RDWR)
+	syscall.Close(c.sockfd)
 	return
 }
 
@@ -123,12 +135,11 @@ func (w *syscallWriter) emit() {
 		w.conn.Write([]byte(k + ": " + strings.Join(v, ",") + "\n"))
 	}
 
-	w.conn.Write([]byte("Content-Type: text/html; charset=UTF-8\n"))
-
 	encoding := w.req.Header.Get("Accept-Encoding")
 	switch encoding {
 	case "gzip":
 		w.conn.Write([]byte("Content-Encoding: gzip\n"))
+		w.conn.Write([]byte("Content-Type: text/html; charset=UTF-8\n"))
 
 		var b bytes.Buffer
 		gz := gzip.NewWriter(&b)
@@ -141,16 +152,17 @@ func (w *syscallWriter) emit() {
 		if err != nil {
 			panic(err)
 		}
-		w.conn.Write([]byte("Content-Length: " + strconv.Itoa(len(bb)) + "\n\n"))
+		w.conn.Write([]byte([]byte("Content-Length: " + strconv.Itoa(len(bb)) + "\n\n")))
 		w.conn.Write(bb)
 	default: // plain
-		w.conn.Write([]byte("Content-Length: " + strconv.Itoa(w.contentLength) + "\n\n"))
+		w.conn.Write([]byte("Content-Length: " + strconv.Itoa(w.contentLength) + "\n"))
+		w.conn.Write([]byte("Content-Type: text/html; charset=UTF-8\n\n"))
 		w.conn.Write(w.dataAll())
 	}
 }
 
 func registerHandler(pat string, handler func(http.ResponseWriter, *http.Request)) {
-	defaultMux[pat] = http.HandlerFunc(handler)
+	defaultMux[pat] = handlerFunc(handler)
 }
 
 func acceptWithSyscall(port int) {
@@ -176,7 +188,10 @@ func acceptWithSyscall(port int) {
 	if err != nil {
 		panic(err)
 	}
-	defer syscall.Shutdown(fd, syscall.SHUT_RD)
+	defer syscall.Shutdown(fd, syscall.SHUT_RDWR)
+	defer syscall.Close(fd)
+
+	fmt.Printf("Running on http://127.0.0.1:%d\n", port)
 
 	// accept
 	nfd, sa, err := syscall.Accept(fd)
@@ -208,6 +223,8 @@ func acceptWithSyscall(port int) {
 			break
 		}
 	}
+
+	syscall.Shutdown(conn.sockfd, syscall.SHUT_RD)
 
 	ss := make([][]byte, 0, 2)
 	before := 0
@@ -265,11 +282,17 @@ func acceptWithSyscall(port int) {
 	writer.emit()
 }
 
+var (
+	debug = flag.Bool("v", false, "verbose(debug) mode")
+	port  = flag.Int("p", 8080, "port")
+)
+
 func init() {
 	defaultMux = make(map[string]http.Handler)
 }
 
 func main() {
+	flag.Parse()
 	registerHandler("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`<!DOCTYPE html>
 <html lang="en">
@@ -282,5 +305,5 @@ func main() {
 		w.WriteHeader(200)
 	})
 
-	acceptWithSyscall(8080)
+	acceptWithSyscall(*port)
 }
